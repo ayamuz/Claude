@@ -28,6 +28,13 @@ def _get_with_retry(url: str, params: dict) -> requests.Response | None:
             if resp.ok:
                 return resp
             logger.warning("PubMed returned HTTP %d.", resp.status_code)
+        except requests.exceptions.ProxyError as exc:
+            logger.error(
+                "PubMed is blocked by the network proxy (%s). "
+                "Abstract enrichment will be skipped.",
+                exc,
+            )
+            return None  # No point retrying a proxy block
         except requests.RequestException as exc:
             logger.warning("PubMed request error: %s", exc)
     return None
@@ -39,10 +46,11 @@ def _doi_to_pmid(doi: str, api_key: str, polite_email: str) -> str | None:
         "db": "pubmed",
         "term": f"{doi}[doi]",
         "retmode": "json",
-        "api_key": api_key,
         "tool": "PaperDigest",
         "email": polite_email,
     }
+    if api_key:
+        params["api_key"] = api_key
     resp = _get_with_retry(ESEARCH_URL, params)
     if resp is None:
         return None
@@ -65,10 +73,11 @@ def _fetch_abstracts_batch(pmids: list[str], api_key: str, polite_email: str) ->
         "id": ",".join(pmids),
         "rettype": "abstract",
         "retmode": "xml",
-        "api_key": api_key,
         "tool": "PaperDigest",
         "email": polite_email,
     }
+    if api_key:
+        params["api_key"] = api_key
     resp = _get_with_retry(EFETCH_URL, params)
     if resp is None:
         return {}
@@ -118,7 +127,22 @@ def enrich_abstracts(papers: list[dict], pubmed_api_key: str, polite_email: str)
 
     print(f"Fetching missing abstracts from PubMed ({len(missing)} papers)...")
 
-    # Step 1: Look up PMIDs for each missing DOI
+    # Step 1: Probe connectivity with a single request before iterating all DOIs
+    probe_params = {
+        "db": "pubmed",
+        "term": "test",
+        "retmode": "json",
+        "retmax": "0",
+        "tool": "PaperDigest",
+        "email": polite_email,
+    }
+    if pubmed_api_key:
+        probe_params["api_key"] = pubmed_api_key
+    if _get_with_retry(ESEARCH_URL, probe_params) is None:
+        print("WARNING: PubMed is unreachable (network/proxy issue). Skipping abstract enrichment.")
+        return papers
+
+    # Step 2: Look up PMIDs for each missing DOI
     doi_to_pmid: dict[str, str] = {}
     for idx, paper in enumerate(missing):
         doi = paper.get("doi", "")
