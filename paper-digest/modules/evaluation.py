@@ -10,7 +10,7 @@ import anthropic
 
 logger = logging.getLogger(__name__)
 
-MODEL = "claude-haiku-4-5-20250929"
+MODEL = "claude-haiku-4-5"
 BATCH_SIZE = 10
 RETRY_DELAYS = [2, 4, 8]
 
